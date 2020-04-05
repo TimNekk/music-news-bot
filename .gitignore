@@ -1,0 +1,6 @@
+"# music-news-bot" 
+.idea
+__pycache__
+venv
+test.py
+users.txt
