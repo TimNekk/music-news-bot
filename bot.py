@@ -13,14 +13,11 @@ bot = telebot.TeleBot('1220887328:AAFjQdnTuwIRi7qg00PI9up6JOUDhjBqgwk')  # Ус�
 
 
 @bot.message_handler(commands=['new'])
-def start_message(message):
-    bot.send_chat_action(message.chat.id, "upload_photo")
-    users = get_users()
-
+def new_command(message):
     # Если новый пользователь
+    users = get_users()
     if message.chat.id not in users:
         print('Новый пользователь')
-
         # Создание пользователся
         user = create_user()
         users[message.chat.id] = user
@@ -31,6 +28,30 @@ def start_message(message):
 
     bot.register_next_step_handler(msg, send_artist)
 
+
+@bot.message_handler(commands=['list'])
+def list_command(message):
+    # Если новый пользователь
+    users = get_users()
+    if message.chat.id not in users:
+        print('Новый пользователь')
+        # Создание пользователся
+        user = create_user()
+        users[message.chat.id] = user
+        save_users(users)
+
+    artists = users[message.chat.id]['artists']
+    if artists:
+        text = 'Список артистов за которыми вы сделите:\n\n'
+
+        for i, artist in enumerate(artists, 1):
+            text += f'{i}. {artist["name"]}\n'
+
+        bot.send_message(message.chat.id, text, reply_markup=edit_artists_keyboard())
+    else:
+        text = 'Чтобы добавить артиста введите /new'
+
+        bot.send_message(message.chat.id, text)
 
 # ---------------------------------------------------------------
 # Обработчик Callback
@@ -48,15 +69,66 @@ def callback_handler(call):
     elif call.data[:-1] == 'add_artist':
         add_artist(call.message, int(call.data[-1]))
 
+    # След и пред страницы
     elif call.data == 'back_page':
         send_artists_list(call.message, k=-1, edit=True)
     elif call.data == 'next_page':
         send_artists_list(call.message, edit=True)
 
+    elif call.data == 'edit_artists':
+        edit_artists(call.message)
+
 
 # ---------------------------------------------------------------
 # Функции
 # ---------------------------------------------------------------
+
+
+def edit_artists(message):
+    text = 'Отправте номер артиста, которого вы хотите *удалить*:\n\n'
+
+    users = get_users()
+    artists = users[message.chat.id]['artists']
+    for i, artist in enumerate(artists, 1):
+        text += f'{i}. {artist["name"]}\n'
+
+    text += '\nОтправате *0* для отмены!'
+
+    msg = bot.edit_message_text(text, message.chat.id, message.message_id, parse_mode='Markdown')
+
+    bot.register_next_step_handler(msg, delete_artist)
+
+
+def delete_artist(message):
+    # Получить пользователя
+    users = get_users()
+    user = users[message.chat.id]
+
+    answer = message.text
+    if answer == '0':
+        for i in range(2):
+            bot.delete_message(message.chat.id, message.message_id - i)
+        list_command(message)
+        return
+
+    try:
+        artist_index = int(answer)
+        if 1 <= artist_index <= len(user['artists']):
+            text = f"Вы больше не следите за артистом *{user['artists'][artist_index - 1]['name']}*"
+
+            user['artists'].pop(artist_index - 1)
+            save_users(users)
+
+            for i in range(2):
+                bot.delete_message(message.chat.id, message.message_id - i)
+
+            bot.send_message(message.chat.id, text, parse_mode='Markdown')
+            return
+    except ValueError:
+        pass
+    text = f'Нужно ввести число от *1* до *{len(user["artists"])}*'
+
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
 
 def add_artist(message, i):
@@ -67,6 +139,15 @@ def add_artist(message, i):
     if user['current_page'] == -1:
         user['current_page'] = 0
     artist = user['list'][user['current_page']][i]
+
+    if artist in user['artists']:
+        text = f'Вы уже следите за исполнителем *{artist["name"]}*'
+
+        bot.delete_message(message.chat.id, message.message_id)  # Удаление предыдущего сообщения
+
+        bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+        return
 
     user['artists'].append(artist)
 
@@ -82,11 +163,13 @@ def add_artist(message, i):
 
 
 def send_artist(message):
+    # Обход ввода команды
+    if message.text[0] == '/':
+        return
+
     artist_name = message.text
     artists = nw.get_artists(artist_name)
-    print(artists)
     if artists == [[]]:
-        print(1)
         text = 'Исполнителей с таким названием не найдено'
         bot.send_message(message.chat.id, text)
         return
@@ -95,6 +178,7 @@ def send_artist(message):
     users = get_users()
     user = users[message.chat.id]
     user['list'] = artists
+    user['current_page'] = -1
     save_users(users)
 
     bot.send_photo(message.chat.id, artists[0][0]['img'], caption=f'*{artists[0][0]["name"]}*', parse_mode='Markdown',
@@ -134,6 +218,13 @@ def send_artists_list(message, k=1, edit=False):
 # ---------------------------------------------------------------
 # Клавиатуры
 # ---------------------------------------------------------------
+
+
+def edit_artists_keyboard():
+    keyboard = types.InlineKeyboardMarkup()
+    b1 = types.InlineKeyboardButton('Редактировать ✏️', callback_data='edit_artists')
+    keyboard.add(b1)
+    return keyboard
 
 
 def artist_keyboard():
