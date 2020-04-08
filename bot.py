@@ -3,6 +3,9 @@ from telebot import types
 import networking as nw
 import pickle
 import os
+import artists_updates_checker as checker
+from threading import Thread
+from time import sleep
 
 bot = telebot.TeleBot('1220887328:AAFjQdnTuwIRi7qg00PI9up6JOUDhjBqgwk')  # Установка токена бота
 
@@ -114,15 +117,27 @@ def delete_artist(message):
     try:
         artist_index = int(answer)
         if 1 <= artist_index <= len(user['artists']):
-            text = f"Вы больше не следите за артистом *{user['artists'][artist_index - 1]['name']}*"
-
-            user['artists'].pop(artist_index - 1)
-            save_users(users)
-
+            # Удаление 2 предыдущих сообщений
             for i in range(2):
                 bot.delete_message(message.chat.id, message.message_id - i)
 
+            # Отправка сообщения
+            text = f"Вы больше не следите за артистом *{user['artists'][artist_index - 1]['name']}*"
             bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+            # Получение артиста из artists.txt
+            saved_artists = checker.get_artists()  # Получить артистов
+            saved_artist = saved_artists[user['artists'][artist_index - 1]['name']]
+            saved_artist['users'].remove(message.chat.id)
+
+            # Остались ли у артиста пользовтели
+            if not saved_artist['users']:
+                checker.delete_artist(user['artists'][artist_index - 1])
+
+            # Удаление артиста у пользовтеля
+            user['artists'].pop(artist_index - 1)
+            save_users(users)
+
             return
     except ValueError:
         pass
@@ -136,10 +151,11 @@ def add_artist(message, i):
     users = get_users()
     user = users[message.chat.id]
 
-    if user['current_page'] == -1:
+    if user['current_page'] == -1:  # Обнуление страницы
         user['current_page'] = 0
     artist = user['list'][user['current_page']][i]
 
+    # Артист уже добавлен
     if artist in user['artists']:
         text = f'Вы уже следите за исполнителем *{artist["name"]}*'
 
@@ -149,16 +165,32 @@ def add_artist(message, i):
 
         return
 
-    user['artists'].append(artist)
+    user['artists'].append(artist)  # Добавление ариста пользователю
 
-    text = f'Теперь вы следите за исполнителем *{artist["name"]}*'
-
+    # Сброс даннхых списка и сраницы
     user['current_page'] = -1
     user['list'] = []
     save_users(users)
 
+    saved_artists = checker.get_artists()  # Получить артистов
+    # Если ли артист в artists.txt
+    if artist['name'] not in saved_artists:
+        saved_artist = checker.create_artist()
+        saved_artist['url'] = artist['url']
+    else:
+        saved_artist = saved_artists[artist['name']]
+
+    # Добавлен ли позльзователь к этому артисту
+    if message.chat.id not in saved_artist['users']:
+        saved_artist['users'].append(message.chat.id)
+        saved_artists[artist['name']] = saved_artist
+
+        checker.save_artists(saved_artists)
+
     bot.delete_message(message.chat.id, message.message_id)  # Удаление предыдущего сообщения
 
+    # Отправка сообщения
+    text = f'Теперь вы следите за исполнителем *{artist["name"]}*'
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
 
@@ -276,6 +308,13 @@ def artists_list_keyboard(count):
     return keyboard
 
 
+def yandex_music_keyboard(url):
+    keyboard = types.InlineKeyboardMarkup()
+    b1 = types.InlineKeyboardButton('Яндекс Музыка', url=url)
+    keyboard.add(b1)
+    return keyboard
+
+
 # ---------------------------------------------------------------
 # Работа с users.txt
 # ---------------------------------------------------------------
@@ -309,16 +348,54 @@ def reset_users_file():
     print('users.txt reset')
 
 
+# ---------------------------------------------------------------
+# Artists updates checker
+# ---------------------------------------------------------------
+
+
+def start_checker_thread():
+    print('checker thread started')
+    Thread(target=artists_updates_checker).start()
+
+
+def artists_updates_checker():
+    while True:
+        sleep(300)
+        albums = checker.check_artists_updates()
+        if albums:
+            for album in albums:
+                text = f"Новый {album['mode']} от *{album['artist']}*"
+
+                if album['mode'] == 'Альбом':
+                    text += f"\n*{album['name']}*\n\n"
+
+                for i, song in enumerate(album['songs'], 1):
+                    text += f"{i}. {song}\n"
+
+                for user in album['users']:
+                    bot.send_photo(user, album['img'], text, reply_markup=yandex_music_keyboard(album['url']), parse_mode='Markdown')
+
+
 if __name__ == '__main__':
+    # Существует ли users.txt
     try:
-        # Существует ли users.txt
         if os.path.getsize('users.txt') == 0:
             reset_users_file()
     except FileNotFoundError:
         reset_users_file()
-
     reset_users_file()
+
+    # Существует ли artists.txt
+    try:
+        if os.path.getsize('artists.txt') == 0:
+            checker.reset_artists_file()
+    except FileNotFoundError:
+        checker.reset_artists_file()
+    checker.reset_artists_file()
+
 
     bot.skip_pending = True
     print('Bot started successfully')
+    start_checker_thread()
     bot.polling(none_stop=True, interval=2)
+
