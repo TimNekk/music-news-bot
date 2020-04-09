@@ -1,3 +1,4 @@
+# - *- coding: utf- 8 - *-
 import telebot
 from telebot import types
 import networking as nw
@@ -6,21 +7,53 @@ import os
 import artists_updates_checker as checker
 from threading import Thread
 from time import sleep
+from colorama import Fore
+import datetime
 
 bot = telebot.TeleBot('1220887328:AAFjQdnTuwIRi7qg00PI9up6JOUDhjBqgwk')  # Установка токена бота
+admins = [551019360]
 
+
+def log(message, text):
+    dt = datetime.datetime.strftime(datetime.datetime.now(), '[%d/%m/%y | %R]')
+    print(f'{Fore.YELLOW}{dt} {Fore.BLUE}{message.chat.id}: {Fore.RESET}{text}')
 
 # ---------------------------------------------------------------
 # Обработчики сообщение
 # ---------------------------------------------------------------
 
 
-@bot.message_handler(commands=['new'])
-def new_command(message):
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    log(message, '/start')
     # Если новый пользователь
     users = get_users()
     if message.chat.id not in users:
-        print('Новый пользователь')
+        log(message, 'Новый пользователь')
+        # Создание пользователся
+        user = create_user()
+        users[message.chat.id] = user
+        save_users(users)
+
+    text = 'Привет! Я музыкальный бот 😁\n'
+    text += 'Я буду оповещать тебя о новинках твоих любимых исполнителей!\n\n'
+    text += '/new - добавить нового артиста\n'
+    text += '/list - артисты за которыми ты следишь\n'
+
+    if message.chat.id in admins:
+        text += '/users - список пользователей\n'
+        text += '/reset - сброс файлов'
+
+    bot.send_message(message.chat.id, text)
+
+
+@bot.message_handler(commands=['new'])
+def new_command(message):
+    log(message, '/new')
+    # Если новый пользователь
+    users = get_users()
+    if message.chat.id not in users:
+        log(message, 'Новый пользователь')
         # Создание пользователся
         user = create_user()
         users[message.chat.id] = user
@@ -34,10 +67,11 @@ def new_command(message):
 
 @bot.message_handler(commands=['list'])
 def list_command(message):
+    log(message, '/list')
     # Если новый пользователь
     users = get_users()
     if message.chat.id not in users:
-        print('Новый пользователь')
+        log(message, 'Новый пользователь')
         # Создание пользователся
         user = create_user()
         users[message.chat.id] = user
@@ -55,6 +89,54 @@ def list_command(message):
         text = 'Чтобы добавить артиста введите /new'
 
         bot.send_message(message.chat.id, text)
+
+
+@bot.message_handler(commands=['users'])
+def artists_command(message):
+    log(message, '/users')
+    # Если новый пользователь
+    users = get_users()
+    if message.chat.id not in users:
+        log(message, 'Новый пользователь')
+        # Создание пользователся
+        user = create_user()
+        users[message.chat.id] = user
+        save_users(users)
+
+    if message.chat.id in admins:
+        users = get_users()
+
+        text = f'Total users: {len(users)}\n\n'
+        for user in users:
+            user_data = users[user]
+            text += f'chat_id: {user}\n'
+            text += f'artists: {user_data["artists"]}\n'
+
+        with open('info.txt', 'w') as file:
+            file.write(text)
+        with open('info.txt', 'r') as file:
+            bot.send_document(message.chat.id, file)
+        os.remove('info.txt')
+
+
+@bot.message_handler(commands=['reset'])
+def artists_command(message):
+    log(message, '/reset')
+    # Если новый пользователь
+    users = get_users()
+    if message.chat.id not in users:
+        log(message, 'Новый пользователь')
+        # Создание пользователся
+        user = create_user()
+        users[message.chat.id] = user
+        save_users(users)
+
+    if message.chat.id in admins:
+        reset_users_file()
+        checker.reset_artists_file()
+
+        bot.send_message(message.chat.id, 'Файлы *users.txt* и *artists.txt* сброшены', parse_mode='Markdown')
+
 
 # ---------------------------------------------------------------
 # Обработчик Callback
@@ -120,6 +202,8 @@ def delete_artist(message):
             # Удаление 2 предыдущих сообщений
             for i in range(2):
                 bot.delete_message(message.chat.id, message.message_id - i)
+
+            log(message, f"{user['artists'][artist_index - 1]['name']} удален")
 
             # Отправка сообщения
             text = f"Вы больше не следите за артистом *{user['artists'][artist_index - 1]['name']}*"
@@ -188,6 +272,8 @@ def add_artist(message, i):
         checker.save_artists(saved_artists)
 
     bot.delete_message(message.chat.id, message.message_id)  # Удаление предыдущего сообщения
+
+    log(message, artist["name"])
 
     # Отправка сообщения
     text = f'Теперь вы следите за исполнителем *{artist["name"]}*'
@@ -354,7 +440,6 @@ def reset_users_file():
 
 
 def start_checker_thread():
-    print('checker thread started')
     Thread(target=artists_updates_checker).start()
 
 
@@ -372,6 +457,8 @@ def artists_updates_checker():
                 for i, song in enumerate(album['songs'], 1):
                     text += f"{i}. {song}\n"
 
+                print(text)
+
                 for user in album['users']:
                     bot.send_photo(user, album['img'], text, reply_markup=yandex_music_keyboard(album['url']), parse_mode='Markdown')
 
@@ -383,7 +470,6 @@ if __name__ == '__main__':
             reset_users_file()
     except FileNotFoundError:
         reset_users_file()
-    reset_users_file()
 
     # Существует ли artists.txt
     try:
@@ -391,8 +477,6 @@ if __name__ == '__main__':
             checker.reset_artists_file()
     except FileNotFoundError:
         checker.reset_artists_file()
-    checker.reset_artists_file()
-
 
     bot.skip_pending = True
     print('Bot started successfully')
